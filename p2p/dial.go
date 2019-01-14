@@ -209,12 +209,13 @@ func (s *dialstate) newTasks(nRunning int, peers map[enode.ID]*Peer, now time.Ti
 	// scenario is useful for the testnet (and private networks) where the discovery
 	// table might be full of mostly bad peers, making it hard to find good ones.
 	if len(peers) == 0 && len(s.bootnodes) > 0 && needDynDials > 0 && now.Sub(s.start) > fallbackInterval {
-		log.Info("Dialing random bootnode")
 		bootnode := s.bootnodes[0]
+		log.Info("Dialing random bootnode", "bootnode", bootnode)
 		s.bootnodes = append(s.bootnodes[:0], s.bootnodes[1:]...)
 		s.bootnodes = append(s.bootnodes, bootnode)
 
 		if addDial(dynDialedConn, bootnode) {
+			log.Info("Successfully dialed random bootnode", "bootnode", bootnode)
 			needDynDials--
 		}
 	}
