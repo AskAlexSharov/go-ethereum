@@ -177,6 +177,7 @@ func (s *dialstate) newTasks(nRunning int, peers map[enode.ID]*Peer, now time.Ti
 
 	// Compute number of dynamic dials necessary at this point.
 	needDynDials := s.maxDynDials
+	log.Info("Necessary needDynDials", "n", needDynDials)
 	for _, p := range peers {
 		if p.rw.is(dynDialedConn) {
 			needDynDials--
@@ -187,6 +188,7 @@ func (s *dialstate) newTasks(nRunning int, peers map[enode.ID]*Peer, now time.Ti
 			needDynDials--
 		}
 	}
+	log.Info("Needed needDynDials", "n", needDynDials)
 
 	// Expire the dial history on every invocation.
 	s.hist.expire(now)
@@ -207,6 +209,7 @@ func (s *dialstate) newTasks(nRunning int, peers map[enode.ID]*Peer, now time.Ti
 	// scenario is useful for the testnet (and private networks) where the discovery
 	// table might be full of mostly bad peers, making it hard to find good ones.
 	if len(peers) == 0 && len(s.bootnodes) > 0 && needDynDials > 0 && now.Sub(s.start) > fallbackInterval {
+		log.Info("Dialing random bootnode")
 		bootnode := s.bootnodes[0]
 		s.bootnodes = append(s.bootnodes[:0], s.bootnodes[1:]...)
 		s.bootnodes = append(s.bootnodes, bootnode)
@@ -217,24 +220,25 @@ func (s *dialstate) newTasks(nRunning int, peers map[enode.ID]*Peer, now time.Ti
 	}
 	// Use random nodes from the table for half of the necessary
 	// dynamic dials.
-	randomCandidates := needDynDials / 2
-	if randomCandidates > 0 {
-		n := s.ntab.ReadRandomNodes(s.randomNodes)
-		for i := 0; i < randomCandidates && i < n; i++ {
-			if addDial(dynDialedConn, s.randomNodes[i]) {
-				needDynDials--
-			}
-		}
-	}
+	//randomCandidates := needDynDials / 2
+	//if randomCandidates > 0 {
+	//n := s.ntab.ReadRandomNodes(s.randomNodes)
+	//for i := 0; i < randomCandidates && i < n; i++ {
+	//log.Info("Dialing random candidate", "i", i)
+	//if addDial(dynDialedConn, s.randomNodes[i]) {
+	//needDynDials--
+	//}
+	//}
+	//}
 	// Create dynamic dials from random lookup results, removing tried
 	// items from the result buffer.
-	i := 0
-	for ; i < len(s.lookupBuf) && needDynDials > 0; i++ {
-		if addDial(dynDialedConn, s.lookupBuf[i]) {
-			needDynDials--
-		}
-	}
-	s.lookupBuf = s.lookupBuf[:copy(s.lookupBuf, s.lookupBuf[i:])]
+	//i := 0
+	//for ; i < len(s.lookupBuf) && needDynDials > 0; i++ {
+	//if addDial(dynDialedConn, s.lookupBuf[i]) {
+	//needDynDials--
+	//}
+	//}
+	//s.lookupBuf = s.lookupBuf[:copy(s.lookupBuf, s.lookupBuf[i:])]
 	// Launch a discovery lookup if more candidates are needed.
 	if len(s.lookupBuf) < needDynDials && !s.lookupRunning {
 		s.lookupRunning = true
