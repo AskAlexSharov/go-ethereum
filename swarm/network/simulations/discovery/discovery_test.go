@@ -86,7 +86,7 @@ func getDbStore(nodeID string) (*state.DBStore, error) {
 }
 
 var (
-	nodeCount       = flag.Int("nodes", 10, "number of nodes to create (default 10)")
+	nodeCount       = flag.Int("nodes", 32, "number of nodes to create (default 10)")
 	initCount       = flag.Int("conns", 1, "number of originally connected peers	 (default 1)")
 	snapshotFile    = flag.String("snapshot", "", "path to create snapshot file in")
 	loglevel        = flag.Int("loglevel", 3, "verbosity of logs")
@@ -287,7 +287,7 @@ func discoverySimulation(nodes, conns int, adapter adapters.NodeAdapter) (*simul
 		if err := client.Call(&healthy, "hive_healthy", ppmap[common.Bytes2Hex(id.Bytes())]); err != nil {
 			return false, fmt.Errorf("error getting node health: %s", err)
 		}
-		log.Info(fmt.Sprintf("node %4s healthy: connected nearest neighbours: %v, know nearest neighbours: %v,\n\n%v", id, healthy.ConnectNN, healthy.KnowNN, healthy.Hive))
+		log.Debug(fmt.Sprintf("node %4s healthy: connected nearest neighbours: %v, know nearest neighbours: %v,\n\n%v", id, healthy.ConnectNN, healthy.KnowNN, healthy.Hive))
 		return healthy.KnowNN && healthy.ConnectNN, nil
 	}
 
