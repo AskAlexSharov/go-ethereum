@@ -39,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/swarm/log"
 	"github.com/ethereum/go-ethereum/swarm/storage/mock"
 	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
 const (
@@ -380,7 +381,8 @@ func (s *LDBStore) collectGarbage() error {
 	log.Debug("garbage collect done", "c", s.gc.count)
 
 	metrics.GetOrRegisterCounter("ldbstore.collectgarbage.delete", nil).Inc(int64(totalDeleted))
-	return nil
+	return s.db.db.CompactRange(util.Range{})
+	//return nil
 }
 
 // Export writes all chunks from the store to a tar archive, returning the
