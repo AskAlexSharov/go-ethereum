@@ -19,11 +19,14 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/swarm/testutil"
+	"github.com/pborman/uuid"
 
 	cli "gopkg.in/urfave/cli.v1"
 )
@@ -44,7 +47,7 @@ func slidingWindow(c *cli.Context) error {
 	defer func(now time.Time) {
 		totalTime := time.Since(now)
 
-		log.Info("total time", "time", totalTime, "kb", filesize)
+		log.Info("total time", "time", totalTime)
 		metrics.GetOrRegisterCounter("sliding-window.total-time", nil).Inc(int64(totalTime))
 	}(time.Now())
 
@@ -55,12 +58,14 @@ func slidingWindow(c *cli.Context) error {
 	deploymentStoreSize := storeSize * 1000                            //bytes. todo move this to be a param, when testing we should test that this value passes. theoretically our J should be store capacity * nodes
 	hashes := []uploadResult{}                                         //swarm hashes of the uploads
 	filesize := deploymentStoreSize / 10                               //each file to upload
-	networkCapacity := deploymentStoreSize * nodes * networkSizeFactor //theoretically this should be equal to(or very near to) nodes * storeSize
-	seed := int(time.Now().UnixNano() / 1e6)
-	log.Info("sliding window test running", "store size", storeSize, "sizeFactor", networkSizeFactor, "nodes", nodes, "filesize", filesize, "network capacity", networkCapacity)
-	log.Info("uploading to "+endpoints[0]+" and syncing", "seed", seed)
+	networkCapacity := deploymentStoreSize * nodes * networkSizeFactor //theoretically this should be very near to nodes * storeSize
+	const iterationTimeout = 30 * time.Second
+	log.Info("sliding window test started", "store size", storeSize, "sizeFactor", networkSizeFactor, "nodes", nodes, "filesize", filesize, "network capacity", networkCapacity)
+	uploadedBytes := 0
+	for uploadedBytes = 0; uploadedBytes <= networkCapacity; uploadedBytes += filesize {
+		seed := int(time.Now().UnixNano() / 1e6)
+		log.Info("uploading to "+endpoints[0]+" and syncing", "seed", seed)
 
-	for uploadedBytes := 0; bytes <= networkCapacity; uploadedBytes += filesize {
 		randomBytes := testutil.RandomBytes(seed, filesize)
 
 		t1 := time.Now()
@@ -78,9 +83,79 @@ func slidingWindow(c *cli.Context) error {
 		}
 
 		log.Info("uploaded successfully", "hash", hash, "digest", fmt.Sprintf("%x", fhash))
-		hashes = append(hashes, uploadResult{hash: hash, digest: digest})
+		hashes = append(hashes, uploadResult{hash: hash, digest: fhash})
 	}
 	time.Sleep(time.Duration(syncDelay) * time.Second)
+
+	networkDepth := 0
+	timedOut := false
+	//now start downloading, last is first.
+	for i := len(hashes) - 1; i >= 0; i-- {
+		wg := sync.WaitGroup{}
+		done := time.After(iterationTimeout)
+		if single {
+			rand.Seed(time.Now().UTC().UnixNano())
+			randIndex := 1 + rand.Intn(len(endpoints)-1)
+			ruid := uuid.New()[:8]
+			wg.Add(1)
+			go func(endpoint string, ruid string) {
+				defer wg.Done()
+				for {
+					select {
+					case <-done:
+						break
+					default:
+					}
+
+					start := time.Now()
+					err := fetch(hashes[i].hash, endpoint, hashes[i].digest, ruid)
+					fetchTime := time.Since(start)
+					if err != nil {
+						continue
+					}
+
+					metrics.GetOrRegisterMeter("sliding-window.single.fetch-time", nil).Mark(int64(fetchTime))
+					return
+				}
+			}(endpoints[randIndex], ruid)
+		} else {
+			for _, endpoint := range endpoints {
+				ruid := uuid.New()[:8]
+				wg.Add(1)
+				go func(endpoint string, ruid string) {
+					defer wg.Done()
+					for {
+						select {
+						case <-done:
+							break
+						default:
+						}
+
+						start := time.Now()
+						err := fetch(hashes[i].hash, endpoint, hashes[i].digest, ruid)
+						fetchTime := time.Since(start)
+						if err != nil {
+							continue
+						}
+
+						metrics.GetOrRegisterMeter("sliding-window.each.fetch-time", nil).Mark(int64(fetchTime))
+						return
+					}
+				}(endpoint, ruid)
+			}
+		}
+
+		wg.Wait()
+		select {
+		case <-done:
+			networkDepth = len(hashes) - i
+			timedOut = true
+			break
+		default:
+		}
+	}
+
+	log.Info("sliding window test finished", "timed out?", timedOut, "networkDepth", networkDepth, "networkDepthBytes", networkDepth*filesize, "uploadedBytes", uploadedBytes)
 
 	return nil
 }
