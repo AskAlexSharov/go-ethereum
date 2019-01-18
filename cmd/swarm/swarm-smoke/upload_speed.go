@@ -19,7 +19,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
@@ -28,29 +27,6 @@ import (
 
 	cli "gopkg.in/urfave/cli.v1"
 )
-
-func cliUploadSpeed(c *cli.Context) error {
-	log.PrintOrigins(true)
-	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(verbosity), log.StreamHandler(os.Stdout, log.TerminalFormat(true))))
-
-	metrics.GetOrRegisterCounter("upload-speed", nil).Inc(1)
-
-	errc := make(chan error)
-	go func() {
-		errc <- uploadSpeed(c)
-	}()
-
-	select {
-	case err := <-errc:
-		if err != nil {
-			metrics.GetOrRegisterCounter("upload-speed.fail", nil).Inc(1)
-		}
-		return err
-	case <-time.After(time.Duration(timeout) * time.Second):
-		metrics.GetOrRegisterCounter("upload-speed.timeout", nil).Inc(1)
-		return fmt.Errorf("timeout after %v sec", timeout)
-	}
-}
 
 func uploadSpeed(c *cli.Context) error {
 	defer func(now time.Time) {

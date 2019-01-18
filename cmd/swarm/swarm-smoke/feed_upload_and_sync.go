@@ -15,10 +15,8 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/swarm/storage/feed"
 	"github.com/ethereum/go-ethereum/swarm/testutil"
-	colorable "github.com/mattn/go-colorable"
 	"github.com/pborman/uuid"
 	cli "gopkg.in/urfave/cli.v1"
 )
@@ -26,27 +24,6 @@ import (
 const (
 	feedRandomDataLength = 8
 )
-
-func cliFeedUploadAndSync(c *cli.Context) error {
-	metrics.GetOrRegisterCounter("feed-and-sync", nil).Inc(1)
-	log.Root().SetHandler(log.CallerFileHandler(log.LvlFilterHandler(log.Lvl(verbosity), log.StreamHandler(colorable.NewColorableStderr(), log.TerminalFormat(true)))))
-
-	errc := make(chan error)
-	go func() {
-		errc <- feedUploadAndSync(c)
-	}()
-
-	select {
-	case err := <-errc:
-		if err != nil {
-			metrics.GetOrRegisterCounter("feed-and-sync.fail", nil).Inc(1)
-		}
-		return err
-	case <-time.After(time.Duration(timeout) * time.Second):
-		metrics.GetOrRegisterCounter("feed-and-sync.timeout", nil).Inc(1)
-		return fmt.Errorf("timeout after %v sec", timeout)
-	}
-}
 
 // TODO: retrieve with manifest + extract repeating code
 func feedUploadAndSync(c *cli.Context) error {

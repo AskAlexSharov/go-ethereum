@@ -27,14 +27,43 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptrace"
+	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/swarm/api"
 	"github.com/ethereum/go-ethereum/swarm/api/client"
 	"github.com/ethereum/go-ethereum/swarm/spancontext"
 	opentracing "github.com/opentracing/opentracing-go"
+	cli "gopkg.in/urfave/cli.v1"
 )
+
+func wrapCliCommand(name string, command func(*cli.Context) error) func(*cli.Context) error {
+	return func(ctx *cli.Context) error {
+		log.PrintOrigins(true)
+		log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(verbosity), log.StreamHandler(os.Stdout, log.TerminalFormat(true))))
+
+		metrics.GetOrRegisterCounter(name, nil).Inc(1)
+
+		errc := make(chan error)
+		go func() {
+			errc <- command(ctx)
+		}()
+
+		select {
+		case err := <-errc:
+			if err != nil {
+				metrics.GetOrRegisterCounter(fmt.Sprintf("%s.fail", name), nil).Inc(1)
+			}
+			return err
+		case <-time.After(time.Duration(timeout) * time.Second):
+			metrics.GetOrRegisterCounter(fmt.Sprintf("%s.timeout", name), nil).Inc(1)
+			return fmt.Errorf("timeout after %v sec", timeout)
+		}
+
+	}
+}
 
 func generateEndpoints(scheme string, cluster string, app string, from int, to int) {
 	if cluster == "prod" {

@@ -18,27 +18,15 @@ package main
 
 import (
 	"bytes"
-	"context"
-	"crypto/md5"
-	crand "crypto/rand"
-	"errors"
 	"fmt"
-	"io"
-	"io/ioutil"
 	"math/rand"
-	"net/http"
-	"net/http/httptrace"
 	"os"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/ethereum/go-ethereum/swarm/api"
-	"github.com/ethereum/go-ethereum/swarm/api/client"
-	"github.com/ethereum/go-ethereum/swarm/spancontext"
 	"github.com/ethereum/go-ethereum/swarm/testutil"
-	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pborman/uuid"
 
 	cli "gopkg.in/urfave/cli.v1"
@@ -66,6 +54,8 @@ func cliSlidingWindow(c *cli.Context) error {
 		return fmt.Errorf("timeout after %v sec", timeout)
 	}
 }
+
+const arbitraryJ = 100
 
 func slidingWindow(c *cli.Context) error {
 	defer func(now time.Time) {
@@ -143,99 +133,4 @@ func slidingWindow(c *cli.Context) error {
 	log.Info("all endpoints synced random file successfully")
 
 	return nil
-}
-
-// fetch is getting the requested `hash` from the `endpoint` and compares it with the `original` file
-func fetch(hash string, endpoint string, original []byte, ruid string) error {
-	ctx, sp := spancontext.StartSpan(context.Background(), "upload-and-sync.fetch")
-	defer sp.Finish()
-
-	log.Trace("sleeping", "ruid", ruid)
-	time.Sleep(3 * time.Second)
-	log.Trace("http get request", "ruid", ruid, "api", endpoint, "hash", hash)
-
-	var tn time.Time
-	reqUri := endpoint + "/bzz:/" + hash + "/"
-	req, _ := http.NewRequest("GET", reqUri, nil)
-
-	opentracing.GlobalTracer().Inject(
-		sp.Context(),
-		opentracing.HTTPHeaders,
-		opentracing.HTTPHeadersCarrier(req.Header))
-
-	trace := client.GetClientTrace("upload-and-sync - http get", "upload-and-sync", ruid, &tn)
-
-	req = req.WithContext(httptrace.WithClientTrace(ctx, trace))
-	transport := http.DefaultTransport
-
-	//transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-
-	tn = time.Now()
-	res, err := transport.RoundTrip(req)
-	if err != nil {
-		log.Error(err.Error(), "ruid", ruid)
-		return err
-	}
-	log.Trace("http get response", "ruid", ruid, "api", endpoint, "hash", hash, "code", res.StatusCode, "len", res.ContentLength)
-
-	if res.StatusCode != 200 {
-		err := fmt.Errorf("expected status code %d, got %v", 200, res.StatusCode)
-		log.Warn(err.Error(), "ruid", ruid)
-		return err
-	}
-
-	defer res.Body.Close()
-
-	rdigest, err := digest(res.Body)
-	if err != nil {
-		log.Warn(err.Error(), "ruid", ruid)
-		return err
-	}
-
-	if !bytes.Equal(rdigest, original) {
-		err := fmt.Errorf("downloaded imported file md5=%x is not the same as the generated one=%x", rdigest, original)
-		log.Warn(err.Error(), "ruid", ruid)
-		return err
-	}
-
-	log.Trace("downloaded file matches random file", "ruid", ruid, "len", res.ContentLength)
-
-	return nil
-}
-
-// upload is uploading a file `f` to `endpoint` via the `swarm up` cmd
-func upload(dataBytes *[]byte, endpoint string) (string, error) {
-	swarm := client.NewClient(endpoint)
-	f := &client.File{
-		ReadCloser: ioutil.NopCloser(bytes.NewReader(*dataBytes)),
-		ManifestEntry: api.ManifestEntry{
-			ContentType: "text/plain",
-			Mode:        0660,
-			Size:        int64(len(*dataBytes)),
-		},
-	}
-
-	// upload data to bzz:// and retrieve the content-addressed manifest hash, hex-encoded.
-	return swarm.Upload(f, "", false)
-}
-
-func digest(r io.Reader) ([]byte, error) {
-	h := md5.New()
-	_, err := io.Copy(h, r)
-	if err != nil {
-		return nil, err
-	}
-	return h.Sum(nil), nil
-}
-
-// generates random data in heap buffer
-func generateRandomData(datasize int) ([]byte, error) {
-	b := make([]byte, datasize)
-	c, err := crand.Read(b)
-	if err != nil {
-		return nil, err
-	} else if c != datasize {
-		return nil, errors.New("short read")
-	}
-	return b, nil
 }
