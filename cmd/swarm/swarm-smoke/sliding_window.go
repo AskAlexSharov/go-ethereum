@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"fmt"
 	"math/rand"
-	"os"
 	"sync"
 	"time"
 
@@ -32,32 +31,19 @@ import (
 	cli "gopkg.in/urfave/cli.v1"
 )
 
-func cliSlidingWindow(c *cli.Context) error {
-	log.PrintOrigins(true)
-	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(verbosity), log.StreamHandler(os.Stdout, log.TerminalFormat(true))))
-
-	metrics.GetOrRegisterCounter("sliding-window", nil).Inc(1)
-
-	errc := make(chan error)
-	go func() {
-		errc <- slidingWindow(c)
-	}()
-
-	select {
-	case err := <-errc:
-		if err != nil {
-			metrics.GetOrRegisterCounter("sliding-window.fail", nil).Inc(1)
-		}
-		return err
-	case <-time.After(time.Duration(timeout) * time.Second):
-		metrics.GetOrRegisterCounter("sliding-window.timeout", nil).Inc(1)
-		return fmt.Errorf("timeout after %v sec", timeout)
-	}
-}
-
 const arbitraryJ = 100
 
+type uploadResult struct {
+	hash   string
+	digest string
+}
+
 func slidingWindow(c *cli.Context) error {
+	// test dscription:
+	// 1. upload repeatedly the same file size, maintain a slice in which swarm hashes are stored, first hash at idx=0
+	// 2. select a random node, start downloading the hashes, starting with the LAST one first (it should always be availble), till the FIRST hash
+	// 3. when
+
 	defer func(now time.Time) {
 		totalTime := time.Since(now)
 
@@ -66,27 +52,37 @@ func slidingWindow(c *cli.Context) error {
 	}(time.Now())
 
 	generateEndpoints(scheme, cluster, appName, from, to)
+	const storeSize = 5000
+	const nodes = 20                                                   //todo this should be a param
+	const networkSizeFactor = 1 / nodes                                //we should aspire that this should be 1.0
+	deploymentStoreSize := storeSize * 1000                            //bytes. todo move this to be a param, when testing we should test that this value passes. theoretically our J should be store capacity * nodes
+	hashes := []uploadResult{}                                         //swarm hashes of the uploads
+	filesize := deploymentStoreSize / 10                               //each file to upload
+	networkCapacity := deploymentStoreSize * nodes * networkSizeFactor //theoretically this should be equal to(or very near to) nodes * storeSize
 	seed := int(time.Now().UnixNano() / 1e6)
+	log.Info("sliding window test running", "store size", storeSize, "sizeFactor", networkSizeFactor, "nodes", nodes, "filesize", filesize, "network capacity", networkCapacity)
 	log.Info("uploading to "+endpoints[0]+" and syncing", "seed", seed)
 
-	randomBytes := testutil.RandomBytes(seed, filesize*1000)
+	for uploadedBytes := 0; bytes <= networkCapacity; uploadedBytes += filesize {
+		randomBytes := testutil.RandomBytes(seed, filesize)
 
-	t1 := time.Now()
-	hash, err := upload(&randomBytes, endpoints[0])
-	if err != nil {
-		log.Error(err.Error())
-		return err
+		t1 := time.Now()
+		hash, err := upload(&randomBytes, endpoints[0])
+		if err != nil {
+			log.Error(err.Error())
+			return err
+		}
+		metrics.GetOrRegisterCounter("sliding-window.upload-time", nil).Inc(int64(time.Since(t1)))
+
+		fhash, err := digest(bytes.NewReader(randomBytes))
+		if err != nil {
+			log.Error(err.Error())
+			return err
+		}
+
+		log.Info("uploaded successfully", "hash", hash, "digest", fmt.Sprintf("%x", fhash))
+		hashes = append(hashes, uploadResult{hash: hash, digest: digest})
 	}
-	metrics.GetOrRegisterCounter("sliding-window.upload-time", nil).Inc(int64(time.Since(t1)))
-
-	fhash, err := digest(bytes.NewReader(randomBytes))
-	if err != nil {
-		log.Error(err.Error())
-		return err
-	}
-
-	log.Info("uploaded successfully", "hash", hash, "digest", fmt.Sprintf("%x", fhash))
-
 	time.Sleep(time.Duration(syncDelay) * time.Second)
 
 	wg := sync.WaitGroup{}
