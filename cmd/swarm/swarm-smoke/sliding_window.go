@@ -19,14 +19,11 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/swarm/testutil"
-	"github.com/pborman/uuid"
 
 	cli "gopkg.in/urfave/cli.v1"
 )
@@ -84,49 +81,6 @@ func slidingWindow(c *cli.Context) error {
 		hashes = append(hashes, uploadResult{hash: hash, digest: digest})
 	}
 	time.Sleep(time.Duration(syncDelay) * time.Second)
-
-	wg := sync.WaitGroup{}
-	if single {
-		rand.Seed(time.Now().UTC().UnixNano())
-		randIndex := 1 + rand.Intn(len(endpoints)-1)
-		ruid := uuid.New()[:8]
-		wg.Add(1)
-		go func(endpoint string, ruid string) {
-			for {
-				start := time.Now()
-				err := fetch(hash, endpoint, fhash, ruid)
-				fetchTime := time.Since(start)
-				if err != nil {
-					continue
-				}
-
-				metrics.GetOrRegisterMeter("upload-and-sync.single.fetch-time", nil).Mark(int64(fetchTime))
-				wg.Done()
-				return
-			}
-		}(endpoints[randIndex], ruid)
-	} else {
-		for _, endpoint := range endpoints {
-			ruid := uuid.New()[:8]
-			wg.Add(1)
-			go func(endpoint string, ruid string) {
-				for {
-					start := time.Now()
-					err := fetch(hash, endpoint, fhash, ruid)
-					fetchTime := time.Since(start)
-					if err != nil {
-						continue
-					}
-
-					metrics.GetOrRegisterMeter("upload-and-sync.each.fetch-time", nil).Mark(int64(fetchTime))
-					wg.Done()
-					return
-				}
-			}(endpoint, ruid)
-		}
-	}
-	wg.Wait()
-	log.Info("all endpoints synced random file successfully")
 
 	return nil
 }
