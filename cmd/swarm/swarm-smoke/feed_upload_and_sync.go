@@ -2,13 +2,10 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/md5"
 	"fmt"
 	"io"
 	"io/ioutil"
-	"net/http"
-	"net/http/httptrace"
 	"os"
 	"os/exec"
 	"strings"
@@ -19,12 +16,9 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
-	"github.com/ethereum/go-ethereum/swarm/api/client"
-	"github.com/ethereum/go-ethereum/swarm/spancontext"
 	"github.com/ethereum/go-ethereum/swarm/storage/feed"
 	"github.com/ethereum/go-ethereum/swarm/testutil"
 	colorable "github.com/mattn/go-colorable"
-	opentracing "github.com/opentracing/opentracing-go"
 	"github.com/pborman/uuid"
 	cli "gopkg.in/urfave/cli.v1"
 )
@@ -304,63 +298,6 @@ func feedUploadAndSync(c *cli.Context) error {
 	}
 	wg.Wait()
 	log.Info("all endpoints synced random file successfully")
-
-	return nil
-}
-
-func fetchFeed(topic string, user string, endpoint string, original []byte, ruid string) error {
-	ctx, sp := spancontext.StartSpan(context.Background(), "feed-and-sync.fetch")
-	defer sp.Finish()
-
-	log.Trace("sleeping", "ruid", ruid)
-	time.Sleep(3 * time.Second)
-
-	log.Trace("http get request (feed)", "ruid", ruid, "api", endpoint, "topic", topic, "user", user)
-
-	var tn time.Time
-	reqUri := endpoint + "/bzz-feed:/?topic=" + topic + "&user=" + user
-	req, _ := http.NewRequest("GET", reqUri, nil)
-
-	opentracing.GlobalTracer().Inject(
-		sp.Context(),
-		opentracing.HTTPHeaders,
-		opentracing.HTTPHeadersCarrier(req.Header))
-
-	trace := client.GetClientTrace("feed-and-sync - http get", "feed-and-sync", ruid, &tn)
-
-	req = req.WithContext(httptrace.WithClientTrace(ctx, trace))
-	transport := http.DefaultTransport
-
-	//transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
-
-	tn = time.Now()
-	res, err := transport.RoundTrip(req)
-	if err != nil {
-		log.Error(err.Error(), "ruid", ruid)
-		return err
-	}
-
-	log.Trace("http get response (feed)", "ruid", ruid, "api", endpoint, "topic", topic, "user", user, "code", res.StatusCode, "len", res.ContentLength)
-
-	if res.StatusCode != 200 {
-		return fmt.Errorf("expected status code %d, got %v (ruid %v)", 200, res.StatusCode, ruid)
-	}
-
-	defer res.Body.Close()
-
-	rdigest, err := digest(res.Body)
-	if err != nil {
-		log.Warn(err.Error(), "ruid", ruid)
-		return err
-	}
-
-	if !bytes.Equal(rdigest, original) {
-		err := fmt.Errorf("downloaded imported file md5=%x is not the same as the generated one=%x", rdigest, original)
-		log.Warn(err.Error(), "ruid", ruid)
-		return err
-	}
-
-	log.Trace("downloaded file matches random file", "ruid", ruid, "len", res.ContentLength)
 
 	return nil
 }
