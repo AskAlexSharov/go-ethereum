@@ -44,35 +44,35 @@ import (
 	cli "gopkg.in/urfave/cli.v1"
 )
 
-func cliUploadAndSync(c *cli.Context) error {
+func cliSlidingWindow(c *cli.Context) error {
 	log.PrintOrigins(true)
 	log.Root().SetHandler(log.LvlFilterHandler(log.Lvl(verbosity), log.StreamHandler(os.Stdout, log.TerminalFormat(true))))
 
-	metrics.GetOrRegisterCounter("upload-and-sync", nil).Inc(1)
+	metrics.GetOrRegisterCounter("sliding-window", nil).Inc(1)
 
 	errc := make(chan error)
 	go func() {
-		errc <- uploadAndSync(c)
+		errc <- slidingWindow(c)
 	}()
 
 	select {
 	case err := <-errc:
 		if err != nil {
-			metrics.GetOrRegisterCounter("upload-and-sync.fail", nil).Inc(1)
+			metrics.GetOrRegisterCounter("sliding-window.fail", nil).Inc(1)
 		}
 		return err
 	case <-time.After(time.Duration(timeout) * time.Second):
-		metrics.GetOrRegisterCounter("upload-and-sync.timeout", nil).Inc(1)
+		metrics.GetOrRegisterCounter("sliding-window.timeout", nil).Inc(1)
 		return fmt.Errorf("timeout after %v sec", timeout)
 	}
 }
 
-func uploadAndSync(c *cli.Context) error {
+func slidingWindow(c *cli.Context) error {
 	defer func(now time.Time) {
 		totalTime := time.Since(now)
 
 		log.Info("total time", "time", totalTime, "kb", filesize)
-		metrics.GetOrRegisterCounter("upload-and-sync.total-time", nil).Inc(int64(totalTime))
+		metrics.GetOrRegisterCounter("sliding-window.total-time", nil).Inc(int64(totalTime))
 	}(time.Now())
 
 	generateEndpoints(scheme, cluster, appName, from, to)
@@ -87,7 +87,7 @@ func uploadAndSync(c *cli.Context) error {
 		log.Error(err.Error())
 		return err
 	}
-	metrics.GetOrRegisterCounter("upload-and-sync.upload-time", nil).Inc(int64(time.Since(t1)))
+	metrics.GetOrRegisterCounter("sliding-window.upload-time", nil).Inc(int64(time.Since(t1)))
 
 	fhash, err := digest(bytes.NewReader(randomBytes))
 	if err != nil {

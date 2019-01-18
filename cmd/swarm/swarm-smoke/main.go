@@ -148,11 +148,17 @@ func main() {
 			Usage:   "feed update generate, upload and sync",
 			Action:  cliFeedUploadAndSync,
 		},
-		{
+		{{
 			Name:    "upload_speed",
 			Aliases: []string{"u"},
 			Usage:   "measure upload speed",
 			Action:  cliUploadSpeed,
+		},
+
+			Name:    "sliding_window",
+			Aliases: []string{"s"},
+			Usage:   "measure network aggregate capacity",
+			Action:  cliSlidingWindow,
 		},
 	}
 
@@ -193,4 +199,20 @@ func emitMetrics(ctx *cli.Context) error {
 	}
 
 	return nil
+}
+
+func generateEndpoints(scheme string, cluster string, app string, from int, to int) {
+	if cluster == "prod" {
+		for port := from; port < to; port++ {
+			endpoints = append(endpoints, fmt.Sprintf("%s://%v.swarm-gateways.net", scheme, port))
+		}
+	} else {
+		for port := from; port < to; port++ {
+			endpoints = append(endpoints, fmt.Sprintf("%s://%s-%v-%s.stg.swarm-gateways.net", scheme, app, port, cluster))
+		}
+	}
+
+	if includeLocalhost {
+		endpoints = append(endpoints, "http://localhost:8500")
+	}
 }
