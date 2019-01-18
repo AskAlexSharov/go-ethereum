@@ -459,10 +459,11 @@ func (s *Swarm) Protocols() (protos []p2p.Protocol) {
 	if s.config.BootnodeMode {
 		protos = []p2p.Protocol{
 			{
-				Name:     network.DiscoverySpec.Name,
-				Version:  network.DiscoverySpec.Version,
-				Length:   network.DiscoverySpec.Length(),
-				Run:      s.bzz.RunProtocol(network.DiscoverySpec, s.bzz.Hive.Run),
+				Name:    network.DiscoverySpec.Name,
+				Version: network.DiscoverySpec.Version,
+				Length:  network.DiscoverySpec.Length(),
+				//Run:      s.bzz.RunProtocol(network.DiscoverySpec, s.bzz.Hive.Run),
+				Run:      s.bzz.Hive.RunHive,
 				NodeInfo: s.bzz.Hive.NodeInfo,
 				PeerInfo: s.bzz.Hive.PeerInfo,
 			},

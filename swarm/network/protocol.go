@@ -57,6 +57,7 @@ var DiscoverySpec = &protocols.Spec{
 	Messages: []interface{}{
 		peersMsg{},
 		subPeersMsg{},
+		HandshakeMsg{},
 	},
 }
 
@@ -88,7 +89,7 @@ type Bzz struct {
 // * peer store
 func NewBzz(config *BzzConfig, kad *Kademlia, store state.Store, streamerSpec *protocols.Spec, streamerRun func(*BzzPeer) error) *Bzz {
 	return &Bzz{
-		Hive:         NewHive(config.HiveParams, kad, store),
+		Hive:         NewHive(config, kad, store),
 		NetworkID:    config.NetworkID,
 		LightNode:    config.LightNode,
 		localAddr:    &BzzAddr{config.OverlayAddr, config.UnderlayAddr},
@@ -129,7 +130,7 @@ func (b *Bzz) Protocols() []p2p.Protocol {
 			Name:     DiscoverySpec.Name,
 			Version:  DiscoverySpec.Version,
 			Length:   DiscoverySpec.Length(),
-			Run:      b.RunProtocol(DiscoverySpec, b.Hive.Run),
+			Run:      b.Hive.RunHive,
 			NodeInfo: b.Hive.NodeInfo,
 			PeerInfo: b.Hive.PeerInfo,
 		},
@@ -213,6 +214,8 @@ func (b *Bzz) performHandshake(p *protocols.Peer, handshake *HandshakeMsg) error
 // runBzz is the p2p protocol run function for the bzz base protocol
 // that negotiates the bzz handshake
 func (b *Bzz) runBzz(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+	log.Trace("Run bzz", "p", p.ID())
+
 	handshake, _ := b.GetOrCreateHandshake(p.ID())
 	if !<-handshake.init {
 		return fmt.Errorf("%08x: bzz already started on peer %08x", b.localAddr.Over()[:4], p.ID().Bytes()[:4])

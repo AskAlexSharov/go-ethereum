@@ -17,6 +17,8 @@
 package network
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -24,6 +26,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/protocols"
 	"github.com/ethereum/go-ethereum/swarm/log"
 	"github.com/ethereum/go-ethereum/swarm/state"
 )
@@ -35,6 +38,11 @@ When the hive is started, a forever loop is launched that
 asks the  kademlia nodetable
 to suggest peers to bootstrap connectivity
 */
+
+const (
+	// timeout for waiting
+	hiveHandshakeTimeout = 3000 * time.Millisecond
+)
 
 // HiveParams holds the config options to hive
 type HiveParams struct {
@@ -56,6 +64,10 @@ func NewHiveParams() *HiveParams {
 
 // Hive manages network connections of the swarm node
 type Hive struct {
+	NetworkID   uint64
+	localAddr   *BzzAddr
+	mtx         sync.Mutex
+	handshakes  map[enode.ID]*HandshakeMsg
 	*HiveParams                   // settings
 	*Kademlia                     // the overlay connectiviy driver
 	Store       state.Store       // storage interface to save peers across sessions
@@ -70,12 +82,15 @@ type Hive struct {
 // HiveParams: config parameters
 // Kademlia: connectivity driver using a network topology
 // StateStore: to save peers across sessions
-func NewHive(params *HiveParams, kad *Kademlia, store state.Store) *Hive {
+func NewHive(config *BzzConfig, kad *Kademlia, store state.Store) *Hive {
 	return &Hive{
-		HiveParams: params,
+		HiveParams: config.HiveParams,
 		Kademlia:   kad,
 		Store:      store,
 		peers:      make(map[enode.ID]*BzzPeer),
+		NetworkID:  config.NetworkID,
+		localAddr:  &BzzAddr{config.OverlayAddr, config.UnderlayAddr},
+		handshakes: make(map[enode.ID]*HandshakeMsg),
 	}
 }
 
@@ -151,6 +166,7 @@ func (h *Hive) connect() {
 
 // Run protocol run function
 func (h *Hive) Run(p *BzzPeer) error {
+	log.Trace("Hive.Run", "p", p.ID())
 	h.trackPeer(p)
 	defer h.untrackPeer(p)
 
@@ -171,6 +187,33 @@ func (h *Hive) Run(p *BzzPeer) error {
 	return dp.Run(dp.HandleMsg)
 }
 
+// RunHive is the p2p protocol run function for the hive protocol
+// that negotiates the hive handshake
+func (h *Hive) RunHive(p *p2p.Peer, rw p2p.MsgReadWriter) error {
+	log.Trace("Hive.RunHive", "p", p.ID())
+
+	handshake, _ := h.GetOrCreateHandshake(p.ID())
+	if !<-handshake.init {
+		return fmt.Errorf("%08x: hive already started on peer %08x", h.localAddr.Over()[:4], p.ID().Bytes()[:4])
+	}
+	close(handshake.init)
+	defer h.removeHandshake(p.ID())
+	peer := protocols.NewPeer(p, rw, DiscoverySpec)
+	err := h.performHandshake(peer, handshake)
+	if err != nil {
+		log.Warn(fmt.Sprintf("%08x: handshake failed with remote peer %08x: %v", h.localAddr.Over()[:4], p.ID().Bytes()[:4], err))
+
+		return err
+	}
+	// fail if we get another handshake
+	msg, err := rw.ReadMsg()
+	if err != nil {
+		return err
+	}
+	msg.Discard()
+	return errors.New("received multiple handshakes")
+}
+
 func (h *Hive) trackPeer(p *BzzPeer) {
 	h.lock.Lock()
 	h.peers[p.ID()] = p
@@ -181,6 +224,65 @@ func (h *Hive) untrackPeer(p *BzzPeer) {
 	h.lock.Lock()
 	delete(h.peers, p.ID())
 	h.lock.Unlock()
+}
+
+// Perform initiates the handshake and validates the remote handshake message
+func (h *Hive) checkHandshake(hs interface{}) error {
+	rhs := hs.(*HandshakeMsg)
+	if rhs.NetworkID != h.NetworkID {
+		return fmt.Errorf("network id mismatch %d (!= %d)", rhs.NetworkID, h.NetworkID)
+	}
+	if rhs.Version != uint64(DiscoverySpec.Version) {
+		return fmt.Errorf("version mismatch %d (!= %d)", rhs.Version, DiscoverySpec.Version)
+	}
+	return nil
+}
+
+// GetHandshake returns the bzz handhake that the remote peer with peerID sent
+func (h *Hive) GetOrCreateHandshake(peerID enode.ID) (*HandshakeMsg, bool) {
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
+	handshake, found := h.handshakes[peerID]
+	if !found {
+		handshake = &HandshakeMsg{
+			Version:   uint64(DiscoverySpec.Version),
+			NetworkID: h.NetworkID,
+			Addr:      h.localAddr,
+			init:      make(chan bool, 1),
+			done:      make(chan struct{}),
+		}
+		// when handhsake is first created for a remote peer
+		// it is initialised with the init
+		handshake.init <- true
+		h.handshakes[peerID] = handshake
+	}
+
+	return handshake, found
+}
+
+// performHandshake implements the negotiation of the hive handshake
+// shared among swarm subprotocols
+func (h *Hive) performHandshake(p *protocols.Peer, handshake *HandshakeMsg) error {
+	ctx, cancel := context.WithTimeout(context.Background(), hiveHandshakeTimeout)
+	defer func() {
+		close(handshake.done)
+		cancel()
+	}()
+	rsh, err := p.Handshake(ctx, handshake, h.checkHandshake)
+	if err != nil {
+		handshake.err = err
+		return err
+	}
+	handshake.peerAddr = rsh.(*HandshakeMsg).Addr
+	return nil
+}
+
+// removeHandshake removes handshake for peer with peerID
+// from the hive handshake store
+func (h *Hive) removeHandshake(peerID enode.ID) {
+	h.mtx.Lock()
+	defer h.mtx.Unlock()
+	delete(h.handshakes, peerID)
 }
 
 // NodeInfo function is used by the p2p.server RPC interface to display
