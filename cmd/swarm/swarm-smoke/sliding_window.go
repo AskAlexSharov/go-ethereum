@@ -89,7 +89,6 @@ func slidingWindow(c *cli.Context) error {
 
 	networkDepth := 0
 	timedOut := false
-	//now start downloading, last is first.
 	for i := len(hashes) - 1; i >= 0; i-- {
 		wg := sync.WaitGroup{}
 		done := time.After(iterationTimeout)
@@ -103,6 +102,7 @@ func slidingWindow(c *cli.Context) error {
 				for {
 					select {
 					case <-done:
+						metrics.GetOrRegisterCounter("sliding-window.single.timeout", nil).Inc(1)
 						break
 					default:
 					}
@@ -127,6 +127,8 @@ func slidingWindow(c *cli.Context) error {
 					for {
 						select {
 						case <-done:
+							metrics.GetOrRegisterCounter("sliding-window.multi.timeout", nil).Inc(1)
+
 							break
 						default:
 						}
@@ -156,6 +158,7 @@ func slidingWindow(c *cli.Context) error {
 	}
 
 	log.Info("sliding window test finished", "timed out?", timedOut, "networkDepth", networkDepth, "networkDepthBytes", networkDepth*filesize, "uploadedBytes", uploadedBytes)
-
+	metrics.GetOrRegisterMeter("sliding-window.network-depth", nil).Mark(int64(networkDepth))
+	metrics.GetOrRegisterMeter("sliding-window.uploaded-bytes", nil).Mark(int64(uploadedBytes))
 	return nil
 }

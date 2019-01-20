@@ -61,7 +61,6 @@ func wrapCliCommand(name string, command func(*cli.Context) error) func(*cli.Con
 			metrics.GetOrRegisterCounter(fmt.Sprintf("%s.timeout", name), nil).Inc(1)
 			return fmt.Errorf("timeout after %v sec", timeout)
 		}
-
 	}
 }
 
